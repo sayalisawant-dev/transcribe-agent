@@ -1,0 +1,9 @@
+Create S3 bucket, then create 3 folders input/ output/ analytics/
+load audio files on Amazon S3 bucket, mono in input and stereo in analytics.
+create lambda function then create a s3 trigger with
+For Event type, choose All object create events.
+For Prefix, type: input/
+For Suffix, type: Nothing or if you want to process one perticular format like mp3 then type the relevant
+Remember only when data hits the bucket or the folder intended processing will begin.
+timeout 3 minutes
+make sure to delete the cloudformation stack and other resources

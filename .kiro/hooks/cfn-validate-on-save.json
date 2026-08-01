@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Validate CloudFormation Template on Save",
+      "trigger": "PostFileSave",
+      "description": "Runs aws cloudformation validate-template whenever the CFN stack YAML is saved. Exit non-zero on validation failure will surface the error in the Kiro output.",
+      "matcher": "transcribe-two-trigger-stack\\\\.yaml$",
+      "action": {
+        "type": "command",
+        "command": "aws cloudformation validate-template --template-body file://Transcribe/transcribe-two-trigger-stack.yaml",
+        "timeout": 30
+      }
+    }
+  ]
+}

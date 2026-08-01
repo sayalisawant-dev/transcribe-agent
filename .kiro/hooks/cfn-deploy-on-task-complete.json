@@ -1,0 +1,13 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Deploy CloudFormation Stack After Task",
+      "trigger": "PostTaskExec",
+      "action": {
+        "type": "command",
+        "command": "aws cloudformation deploy --template-file Transcribe/transcribe-two-trigger-stack.yaml --stack-name transcribe-two-trigger-stack --capabilities CAPABILITY_NAMED_IAM --parameter-overrides ExistingBucketName=transcribeagent2026"
+      }
+    }
+  ]
+}

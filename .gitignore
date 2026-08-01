@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Streamlit
+.streamlit/
+
+# AWS credentials / temp files
+*.json.bak
+result.json
+
+# macOS artifacts
+__MACOSX/
+.DS_Store
+**/.DS_Store
+
+# Audio files (large binaries — optional, remove if you want them tracked)
+*.mp3
+*.mp4
+*.wav
+*.flac

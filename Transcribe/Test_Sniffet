@@ -1,0 +1,18 @@
+"""
+You can use below code to create test event to test
+the Lambda function.
+{
+    "Records": [
+                {
+                "s3": {
+                    "bucket": {
+                    "name": "<Your_bucket_name>"
+                    },
+                    "object": {
+                    "key": "input/file.mp3"
+                    }
+                }
+                }
+            ]
+}
+"""
