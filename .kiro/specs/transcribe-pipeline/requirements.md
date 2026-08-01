@@ -31,6 +31,171 @@ This document defines the requirements for an AWS-based audio transcription pipe
 
 ---
 
+## CloudFormation Stack Parameters
+
+All parameters are defined in `Transcribe/transcribe-two-trigger-stack.yaml`. Each can be overridden at deploy time via `--parameter-overrides`.
+
+| Parameter | Default Value | Description |
+|---|---|---|
+| `ExistingBucketName` | `cloudage-transcribe-2013` | Existing S3 bucket that receives audio files. Must exist before stack deploy. |
+| `LambdaExecutionRoleName` | `cloudage` | IAM role name created for all Lambda functions in the stack. |
+| `StandardInputPrefix` | `input/` | S3 key prefix that triggers the standard Transcribe Lambda on `ObjectCreated`. |
+| `StandardOutputPrefix` | `output/results/` | S3 key prefix where standard transcription JSON output is written. |
+| `AnalyticsInputPrefix` | `analytics/` | S3 key prefix that triggers the Call Analytics Lambda on `ObjectCreated`. |
+| `AnalyticsOutputPrefix` | `output/results/` | Output location passed to `StartCallAnalyticsJob`. Transcribe automatically appends `analytics/` subfolder — final output lands at `output/results/analytics/<job>.json`. |
+| `TranscribeDataAccessRoleName` | `AmazonTranscribeServiceRole-cloudagetranscriberole` | IAM role name for Amazon Transcribe Call Analytics data access. Constructed as `arn:aws:iam::<AccountId>:role/service-role/<name>`. |
+
+### Active Deployment Values (transcribeagent2026)
+
+```bash
+aws cloudformation deploy \
+  --template-file Transcribe/transcribe-two-trigger-stack.yaml \
+  --stack-name transcribe-two-trigger-stack \
+  --region us-east-1 \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides \
+    ExistingBucketName=transcribeagent2026 \
+    LambdaExecutionRoleName=cloudage \
+    TranscribeDataAccessRoleName=AmazonTranscribeServiceRole-cloudagetranscriberole
+```
+
+---
+
+## Lambda Functions
+
+### TranscribeFunction
+
+| Property | Value |
+|---|---|
+| Function name | `transcribe-two-trigger-stack-transcribe-trigger` |
+| Runtime | Python 3.12 |
+| Handler | `index.lambda_handler` |
+| Timeout | 180 seconds |
+| Memory | 256 MB |
+| Trigger | S3 `ObjectCreated` on `input/` prefix (`.mp3`, `.mp4`, `.wav`) |
+
+**Environment Variables:**
+
+| Variable | Value |
+|---|---|
+| `BUCKET_NAME` | Value of `ExistingBucketName` parameter |
+| `INPUT_PREFIX` | Value of `StandardInputPrefix` parameter (default: `input/`) |
+| `OUTPUT_PREFIX` | Value of `StandardOutputPrefix` parameter (default: `output/results/`) |
+
+---
+
+### TranscribeAnalyticsFunction
+
+| Property | Value |
+|---|---|
+| Function name | `transcribe-two-trigger-stack-transcribe-analytics-trigger` |
+| Runtime | Python 3.12 |
+| Handler | `index.lambda_handler` |
+| Timeout | 180 seconds |
+| Memory | 256 MB |
+| Trigger | S3 `ObjectCreated` on `analytics/` prefix (`.mp3`) |
+
+**Environment Variables:**
+
+| Variable | Value |
+|---|---|
+| `BUCKET_NAME` | Value of `ExistingBucketName` parameter |
+| `INPUT_PREFIX` | Value of `AnalyticsInputPrefix` parameter (default: `analytics/`) |
+| `OUTPUT_PREFIX` | Value of `AnalyticsOutputPrefix` parameter (default: `output/results/`) — Transcribe appends `analytics/` automatically, so output lands at `output/results/analytics/` |
+| `DATA_ACCESS_ROLE_ARN` | Constructed as `arn:aws:iam::<AccountId>:role/service-role/<TranscribeDataAccessRoleName>` |
+
+---
+
+### BucketNotificationManagerFunction
+
+| Property | Value |
+|---|---|
+| Function name | `transcribe-two-trigger-stack-bucket-notification-manager` |
+| Runtime | Python 3.12 |
+| Handler | `index.lambda_handler` |
+| Timeout | 180 seconds |
+| Memory | 128 MB |
+| Invocation | CloudFormation Custom Resource only (not S3 triggered) |
+
+---
+
+### CreateS3FoldersFunction
+
+| Property | Value |
+|---|---|
+| Function name | `transcribe-two-trigger-stack-create-s3-folders` |
+| Runtime | Python 3.12 |
+| Handler | `index.lambda_handler` |
+| Timeout | 60 seconds |
+| Memory | 128 MB |
+| Invocation | CloudFormation Custom Resource only — creates `input/`, `output/`, `analytics/` on deploy |
+
+---
+
+## IAM Resources
+
+### Lambda Execution Role (`LambdaExecutionRoleName`)
+
+| Permission | Resource Scope |
+|---|---|
+| `s3:GetObject`, `s3:PutObject` | `arn:aws:s3:::<bucket>/*` |
+| `s3:ListBucket`, `s3:GetBucketLocation`, `s3:GetBucketNotification`, `s3:PutBucketNotification` | `arn:aws:s3:::<bucket>` |
+| `transcribe:StartTranscriptionJob` | `arn:aws:transcribe:<region>:<account>:transcription-job/*` |
+| `transcribe:StartCallAnalyticsJob` | `arn:aws:transcribe:<region>:<account>:call-analytics-job/*` and `arn:aws:transcribe:<region>:<account>:analytics/*` |
+| `iam:PassRole` (conditioned on `iam:PassedToService: transcribe.amazonaws.com`) | `arn:aws:iam::<account>:role/service-role/<TranscribeDataAccessRoleName>` |
+| `AWSLambdaBasicExecutionRole` (managed) | CloudWatch Logs |
+
+### Transcribe Data Access Role (`TranscribeDataAccessRoleName`)
+
+| Property | Value |
+|---|---|
+| Trust policy | `transcribe.amazonaws.com` |
+| Path | `/service-role/` |
+| Attached policy | `AmazonS3FullAccess` |
+| Purpose | Passed to `StartCallAnalyticsJob` so Transcribe can read from and write to S3 |
+
+---
+
+## S3 Bucket Layout
+
+```
+transcribeagent2026/
+├── input/                        # Drop mono audio → triggers TranscribeFunction
+├── analytics/                    # Drop stereo audio → triggers TranscribeAnalyticsFunction
+└── output/
+    └── results/
+        ├── job_<filename>.json                          # Standard transcription output
+        └── analytics/                                   # Transcribe appends this subfolder automatically
+            └── analytics_<filename>_<timestamp>.json   # Call analytics output
+```
+
+---
+
+## CloudFormation Stack Outputs
+
+| Output Key | Description |
+|---|---|
+| `SharedRoleName` | IAM role name shared by all Lambda functions |
+| `StandardTranscribeLambdaArn` | ARN of `TranscribeFunction` |
+| `AnalyticsTranscribeLambdaArn` | ARN of `TranscribeAnalyticsFunction` |
+| `BucketName` | S3 bucket configured with event notifications |
+
+---
+
+## Streamlit UI Parameters (`app.py`)
+
+| Constant | Value | Purpose |
+|---|---|---|
+| `BUCKET_NAME` | `transcribeagent2026` | S3 bucket for all uploads and output reads |
+| `STANDARD_PREFIX` | `input/` | Upload prefix for standard transcription |
+| `ANALYTICS_PREFIX` | `analytics/` | Upload prefix for call analytics |
+| `OUTPUT_PREFIX` | `output/results/` | S3 prefix to list/read standard output JSON |
+| `ANALYTICS_OUTPUT_PREFIX` | `output/results/analytics/` | S3 prefix to list/read analytics output JSON |
+| `REGION` | `us-east-1` | AWS region for all boto3 clients |
+| `SUPPORTED_FORMATS` | `mp3, mp4, wav, flac, ogg, amr, webm` | File types accepted by the upload widget |
+
+---
+
 ## Requirements
 
 ### Requirement 1: S3 Event-Driven Trigger for Standard Transcription
@@ -165,4 +330,3 @@ This document defines the requirements for an AWS-based audio transcription pipe
 2. WHEN constructing a Job_Name for standard transcription, THE `TranscribeFunction` SHALL prefix the sanitized filename with `job_` and truncate the combined result so the sanitized filename portion does not exceed 150 characters.
 3. WHEN constructing a Job_Name for analytics, THE `TranscribeAnalyticsFunction` SHALL prefix the sanitized filename with `analytics_`, append a UTC timestamp suffix in `YYYYMMDDHHmmss` format, and truncate the sanitized filename portion to 100 characters.
 4. THE `TranscribeFunction` SHALL derive the filename using `os.path.basename` from the S3 object key to exclude any folder prefix from the sanitized name.
-

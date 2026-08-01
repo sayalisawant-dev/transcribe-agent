@@ -31,8 +31,11 @@ Parameters:
 
   AnalyticsOutputPrefix:
     Type: String
-    Default: output/results/analytics/
-    Description: Prefix where Call Analytics output is written.
+    Default: output/results/
+    Description: >
+      Output location passed to StartCallAnalyticsJob. Transcribe automatically
+      appends an analytics/ subfolder, so the final output lands at
+      output/results/analytics/<job-name>.json.
 
   TranscribeDataAccessRoleName:
     Type: String
@@ -88,6 +91,7 @@ Resources:
             Resource: 
               - !Sub arn:aws:transcribe:${AWS::Region}:${AWS::AccountId}:transcription-job/*
               - !Sub arn:aws:transcribe:${AWS::Region}:${AWS::AccountId}:call-analytics-job/*
+              - !Sub arn:aws:transcribe:${AWS::Region}:${AWS::AccountId}:analytics/*
           - Sid: PassRoleToTranscribe
             Effect: Allow
             Action:
@@ -203,7 +207,7 @@ Resources:
 
               data_access_role = os.environ["DATA_ACCESS_ROLE_ARN"]
               input_prefix = os.environ.get("INPUT_PREFIX", "analytics/")
-              output_prefix = os.environ.get("OUTPUT_PREFIX", "output/results/analytics/")
+              output_prefix = os.environ.get("OUTPUT_PREFIX", "output/results/")
 
               records = event.get("Records", [])
               if not records:

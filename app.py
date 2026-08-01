@@ -15,7 +15,7 @@ BUCKET_NAME = "transcribeagent2026"
 STANDARD_PREFIX = "input/"
 ANALYTICS_PREFIX = "analytics/"
 OUTPUT_PREFIX = "output/results/"
-ANALYTICS_OUTPUT_PREFIX = "output/results/analytics/"
+ANALYTICS_OUTPUT_PREFIX = "output/results/analytics/analytics/"
 REGION = "us-east-1"
 SUPPORTED_FORMATS = ["mp3", "mp4", "wav", "flac", "ogg", "amr", "webm"]
 
@@ -51,7 +51,18 @@ def get_job_status(transcribe, job_name, analytics=False):
 
 def fetch_transcript_from_s3(s3, job_name, analytics=False):
     prefix = ANALYTICS_OUTPUT_PREFIX if analytics else OUTPUT_PREFIX
-    key = f"{prefix}{job_name}.json"
+    # Analytics jobs: Transcribe appends its own subfolder, search by listing
+    if analytics:
+        try:
+            resp = s3.list_objects_v2(Bucket=BUCKET_NAME, Prefix=ANALYTICS_OUTPUT_PREFIX)
+            matched = [o["Key"] for o in resp.get("Contents", []) if job_name in o["Key"] and o["Key"].endswith(".json")]
+            if not matched:
+                return f"Could not fetch transcript: file not found for job {job_name}"
+            key = matched[0]
+        except Exception as e:
+            return f"Could not fetch transcript: {e}"
+    else:
+        key = f"{prefix}{job_name}.json"
     try:
         obj = s3.get_object(Bucket=BUCKET_NAME, Key=key)
         import json
