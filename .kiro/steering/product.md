@@ -43,17 +43,30 @@ Four tabs:
 
 ## AWS Resources Created
 
-| Resource | Name / Value |
-|----------|-------------|
-| S3 Bucket | `transcribe-2027` (pre-existing, not created by stack) |
+### CloudFormation Stack (destroyed on `deploy.ps1 -Destroy`)
+| Resource | Name |
+|----------|------|
 | CloudFormation Stack | `transcribe-two-trigger-stack` |
 | Lambda — standard | `transcribe-two-trigger-stack-transcribe-trigger` |
 | Lambda — analytics | `transcribe-two-trigger-stack-transcribe-analytics-trigger` |
+| Lambda — notification manager | `transcribe-two-trigger-stack-bucket-notification-manager` |
+| Lambda — folder creator | `transcribe-two-trigger-stack-create-s3-folders` |
 | Lambda execution role | `cloudage` |
-| Transcribe service role | `AmazonTranscribeServiceRole-cloudagetranscriberole` |
-| Glue database | `transcribe_pipeline_db` |
-| Glue table — standard | `std_transcripts` |
-| Glue table — analytics | `cal_analytics` |
-| Glue crawler | `analytics-transcripts-crawler` |
-| Glue crawler role | `GlueTranscribeCrawlerRole` |
-| Athena workgroup | `transcribe-workgroup` |
+| IAM policy | `transcribe-two-trigger-stack-transcribe-access-policy` |
+| S3 notifications | Configured on `transcribe-2027` for `input/` and `analytics/` prefixes |
+| S3 folders | `input/`, `analytics/`, `output/`, `output/results/`, `output/results/analytics/` |
+
+### Persistent Resources (survive stack destroy — created by `deploy.ps1` Steps 2–3 and 11)
+| Resource | Name | Created in Step |
+|----------|------|----------------|
+| S3 Bucket | `transcribe-2027` | Pre-existing / Step 3 |
+| Transcribe service role | `AmazonTranscribeServiceRole-cloudagetranscriberole` (path: `/service-role/`) | Step 2 |
+| Inline PassRole policy | `PassRoleToTranscribeInline` on `cloudage` role | Step 6 |
+| `AmazonTranscribeFullAccess` | Attached to `cloudage` role | Step 6 |
+| Glue database | `transcribe_pipeline_db` | Step 11 |
+| Glue table — standard | `std_transcripts` → `s3://transcribe-2027/output/results/` | Step 11 |
+| Glue table — analytics | `cal_analytics` → `s3://transcribe-2027/output/results/analytics/` | Step 11 |
+| Glue crawler | `analytics-transcripts-crawler` (prefix: `cal_`) | Step 11 |
+| Glue crawler role | `GlueTranscribeCrawlerRole` | Step 11 |
+| Athena workgroup | `transcribe-workgroup` → results at `s3://transcribe-2027/athena-results/` | Step 11 |
+| S3 folder — Athena results | `athena-results/` in `transcribe-2027` | Step 11 |

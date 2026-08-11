@@ -12,12 +12,30 @@
 | Service | Usage |
 |---------|-------|
 | **AWS Lambda** | Event-driven compute for standard and analytics transcription triggers |
-| **Amazon S3** | Audio file ingestion, transcription output storage, Athena query results |
-| **Amazon Transcribe** | `StartTranscriptionJob` (standard) and `StartCallAnalyticsJob` (analytics) |
-| **AWS IAM** | Lambda execution role, Transcribe service role, Glue crawler role |
-| **AWS CloudFormation** | IaC deployment of the full pipeline stack |
-| **AWS Glue** | Data catalog: database `transcribe_pipeline_db`, tables `std_transcripts` and `cal_analytics`, crawler `analytics-transcripts-crawler` |
-| **Amazon Athena** | SQL queries against Glue-catalogued Transcribe output JSON using workgroup `transcribe-workgroup` |
+| **Amazon S3** | Audio file ingestion (`input/`, `analytics/`), transcription output (`output/results/`), Athena query results (`athena-results/`) |
+| **Amazon Transcribe** | `StartTranscriptionJob` (standard mono) and `StartCallAnalyticsJob` (stereo call analytics) |
+| **AWS IAM** | Lambda execution role (`cloudage`), Transcribe service role, Glue crawler role |
+| **AWS CloudFormation** | IaC deployment of Lambda functions, S3 notifications, S3 folders, IAM role |
+| **AWS Glue** | Data catalog — database `transcribe_pipeline_db`, DDL table `std_transcripts`, crawler-created table `cal_analytics`, crawler `analytics-transcripts-crawler` |
+| **Amazon Athena** | SQL queries via workgroup `transcribe-workgroup` against `transcribe_pipeline_db` tables; results in `s3://transcribe-2027/athena-results/` |
+
+## Glue Tables Detail
+
+| Table | Location | Created By | SerDe |
+|-------|----------|------------|-------|
+| `std_transcripts` | `s3://transcribe-2027/output/results/` | Athena DDL (`CREATE EXTERNAL TABLE IF NOT EXISTS`) | `org.openx.data.jsonserde.JsonSerDe` with `ignore.malformed.json=true` |
+| `cal_analytics` | `s3://transcribe-2027/output/results/analytics/` | Glue crawler `analytics-transcripts-crawler` | `org.openx.data.jsonserde.JsonSerDe` |
+
+## Athena Preset Queries (in `app.py`)
+
+| Query Name | Table | What it returns |
+|------------|-------|----------------|
+| Standard — All transcripts | `std_transcripts` | jobName, status, language, full transcript text |
+| Standard — Word-level timing | `std_transcripts` | word, start/end time, confidence per word |
+| Analytics — Sentiment overview | `cal_analytics` | agent + customer sentiment scores, call duration |
+| Analytics — Talk time breakdown | `cal_analytics` | agent/customer talk time and words-per-minute |
+| Analytics — Interruptions | `cal_analytics` | total interruption count and duration |
+| Analytics — Conversation turns | `cal_analytics` | role, sentiment, content, timestamps per turn |
 
 ## IAM Roles
 

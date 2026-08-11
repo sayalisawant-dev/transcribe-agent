@@ -49,12 +49,29 @@ transcribe-2027/
 
 ```
 Glue Database : transcribe_pipeline_db
-  ├── std_transcripts    → s3://transcribe-2027/output/results/         (DDL-created)
-  └── cal_analytics      → s3://transcribe-2027/output/results/analytics/ (crawler-created)
+  ├── std_transcripts    → s3://transcribe-2027/output/results/          (created via Athena DDL)
+  └── cal_analytics      → s3://transcribe-2027/output/results/analytics/ (created by Glue crawler)
+
+Glue Crawler  : analytics-transcripts-crawler
+  ├── Role    : GlueTranscribeCrawlerRole
+  ├── Prefix  : cal_
+  └── Target  : s3://transcribe-2027/output/results/analytics/
 
 Athena Workgroup : transcribe-workgroup
-  └── Result location   → s3://transcribe-2027/athena-results/
+  └── Result location → s3://transcribe-2027/athena-results/
 ```
+
+### Glue / Athena Lifecycle Notes
+
+- These resources are **NOT part of the CloudFormation stack** — they survive a `deploy.ps1 -Destroy` and do not need to be recreated on redeploy.
+- `deploy.ps1` Step 11 creates them idempotently — safe to re-run, skips if already present.
+- After uploading new analytics files, re-run the crawler to update the `cal_analytics` schema:
+  ```powershell
+  aws glue start-crawler --name "analytics-transcripts-crawler" --region us-east-1
+  ```
+- `std_transcripts` is a folder-level DDL table — it picks up new `.json` files automatically with no crawler needed.
+- `cal_analytics` uses `org.openx.data.jsonserde.JsonSerDe` with `CombineCompatibleSchemas` grouping policy.
+- `std_transcripts` uses `org.openx.data.jsonserde.JsonSerDe` with `ignore.malformed.json=true`.
 
 ## Key Conventions
 
