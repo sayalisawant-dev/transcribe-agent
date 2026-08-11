@@ -1,61 +1,63 @@
+import datetime
 import json
-import boto3
+import logging
 import os
 import re
-import datetime
-import logging
 from urllib.parse import unquote_plus
+import boto3
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-
-transcribe = boto3.client('transcribe')
+transcribe = boto3.client("transcribe")
 
 def lambda_handler(event, context):
-    logger.info(f"Event received: {json.dumps(event)}")
-    
-    # Configuration
-    DATA_ACCESS_ROLE = "arn:aws:iam::015337708931:role/service-role/AmazonTranscribeServiceRole-cloudagetranscriberole"
-    
-    records = event.get('Records', [])
+    logger.info("Event received: %s", json.dumps(event))
+
+    # All config comes from Lambda environment variables — nothing hardcoded
+    data_access_role = os.environ["DATA_ACCESS_ROLE_ARN"]
+    input_prefix     = os.environ.get("INPUT_PREFIX",  "analytics/")
+    output_prefix    = os.environ.get("OUTPUT_PREFIX", "output/results/")
+
+    records = event.get("Records", [])
     if not records:
         return {"status": "skipped", "reason": "no records in event"}
 
     results = []
     for record in records:
+        key = None
         try:
-            bucket = record['s3']['bucket']['name']
-            key = unquote_plus(record['s3']['object']['key'])
-            
-            # Match your specific folder
-            if not key.startswith('analytics/'):
+            bucket = record["s3"]["bucket"]["name"]
+            key    = unquote_plus(record["s3"]["object"]["key"])
+
+            if not key.startswith(input_prefix):
                 continue
 
-            filename = os.path.basename(key)
-            clean_name = re.sub(r'[^a-zA-Z0-9._-]', '-', filename)
-            timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-            job_name = f"analytics_{clean_name[:100]}_{timestamp}"
+            filename   = os.path.basename(key)
+            clean_name = re.sub(r"[^a-zA-Z0-9._-]", "-", filename)
+            timestamp  = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S")
+            job_name   = f"analytics_{clean_name[:100]}_{timestamp}"
 
-            # FIXED: Place parameters inside the Settings block
-            response = transcribe.start_call_analytics_job(
+            transcribe.start_call_analytics_job(
                 CallAnalyticsJobName=job_name,
-                Media={'MediaFileUri': f's3://{bucket}/{key}'},
-                DataAccessRoleArn=DATA_ACCESS_ROLE,
-                OutputLocation=f"s3://{bucket}/output/results/analytics/",
+                Media={"MediaFileUri": f"s3://{bucket}/{key}"},
+                DataAccessRoleArn=data_access_role,
+                OutputLocation=f"s3://{bucket}/{output_prefix}",
                 ChannelDefinitions=[
-                    {'ChannelId': 1, 'ParticipantRole': 'AGENT'},
-                    {'ChannelId': 0, 'ParticipantRole': 'CUSTOMER'}
+                    {"ChannelId": 0, "ParticipantRole": "CUSTOMER"},
+                    {"ChannelId": 1, "ParticipantRole": "AGENT"},
                 ],
                 Settings={
-                    'LanguageOptions': ['en-US', 'en-GB', 'es-US', 'fr-FR']
-                }
+                    "LanguageOptions": ["en-US", "en-GB", "es-US", "fr-FR"]
+                },
             )
-            
+
+            logger.info("Started call analytics job %s", job_name)
             results.append({"file": key, "job": job_name, "status": "STARTED"})
 
-        except Exception as e:
-            logger.error(f"Error for {key}: {str(e)}", exc_info=True)
-            results.append({"file": key, "status": "FAILED", "error": str(e)})
-            continue
+        except Exception as err:
+            logger.exception("Error for %s: %s", key, err)
+            results.append(
+                {"file": key or "unknown", "status": "FAILED", "error": str(err)}
+            )
 
     return {"processed_results": results}
