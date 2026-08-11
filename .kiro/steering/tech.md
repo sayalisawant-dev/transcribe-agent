@@ -1,22 +1,52 @@
 # Tech Stack
 
 ## Runtime & Language
-- **Python 3.12** — all Lambda functions
-- **boto3** — AWS SDK for Python (Transcribe, S3 clients)
+- **Python 3.12** — all Lambda functions and Streamlit UI
+- **boto3** — AWS SDK for Python (S3, Transcribe, Athena, Glue clients)
 - **botocore** — used for `ClientError` exception handling
+- **streamlit >= 1.35.0** — web UI framework
+- **pandas >= 1.4.0** — Athena query result rendering and CSV export
 
 ## AWS Services
-- **AWS Lambda** — event-driven compute for both transcription triggers
-- **Amazon S3** — audio file ingestion and output storage
-- **Amazon Transcribe** — `StartTranscriptionJob` (standard) and `StartCallAnalyticsJob` (analytics)
-- **AWS IAM** — Lambda execution role with scoped S3/Transcribe/PassRole permissions
-- **AWS CloudFormation** — infrastructure-as-code for the full stack
+
+| Service | Usage |
+|---------|-------|
+| **AWS Lambda** | Event-driven compute for standard and analytics transcription triggers |
+| **Amazon S3** | Audio file ingestion, transcription output storage, Athena query results |
+| **Amazon Transcribe** | `StartTranscriptionJob` (standard) and `StartCallAnalyticsJob` (analytics) |
+| **AWS IAM** | Lambda execution role, Transcribe service role, Glue crawler role |
+| **AWS CloudFormation** | IaC deployment of the full pipeline stack |
+| **AWS Glue** | Data catalog: database `transcribe_pipeline_db`, tables `std_transcripts` and `cal_analytics`, crawler `analytics-transcripts-crawler` |
+| **Amazon Athena** | SQL queries against Glue-catalogued Transcribe output JSON using workgroup `transcribe-workgroup` |
+
+## IAM Roles
+
+### `cloudage` — Lambda Execution Role
+| Policy | Type | Purpose |
+|--------|------|---------|
+| `AWSLambdaBasicExecutionRole` | Managed | CloudWatch Logs |
+| `AmazonTranscribeFullAccess` | Managed | `StartTranscriptionJob` + `StartCallAnalyticsJob` with wildcard resource (required for Call Analytics) |
+| `transcribe-two-trigger-stack-transcribe-access-policy` | Customer Managed | Scoped S3 read/write on `transcribe-2027` |
+| `PassRoleToTranscribeInline` | Inline | `iam:PassRole` to Transcribe service role — no `iam:PassedToService` condition (required for `StartCallAnalyticsJob`) |
+
+### `AmazonTranscribeServiceRole-cloudagetranscriberole` — Transcribe Data Access Role
+| Policy | Purpose |
+|--------|---------|
+| `AmazonS3FullAccess` | Allows Transcribe Call Analytics to read audio and write output to S3 |
+
+### `GlueTranscribeCrawlerRole` — Glue Crawler Role
+| Policy | Purpose |
+|--------|---------|
+| `AWSGlueServiceRole` | Core Glue permissions |
+| `AmazonS3FullAccess` | Read output JSON from S3 to build Glue catalog |
 
 ## Infrastructure
-- Deployed via **CloudFormation** (`transcribe-two-trigger-stack.yaml`)
+- Deployed via **CloudFormation** (`Transcribe/transcribe-two-trigger-stack.yaml`)
 - Custom CloudFormation resources (backed by Lambda) handle:
-  - S3 bucket notification configuration (merges with existing notifications, non-destructive)
+  - S3 bucket notification configuration (merges with existing, non-destructive)
   - S3 folder creation on stack deploy
+- **Glue tables** — `std_transcripts` created via Athena DDL; `cal_analytics` created by Glue crawler
+- **Athena SerDe** — `org.openx.data.jsonserde.JsonSerDe` with `ignore.malformed.json=true`
 - No CDK, SAM, or Terraform — plain CloudFormation with inline Lambda `ZipFile` code
 
 ## Supported Audio Formats
@@ -24,30 +54,58 @@
 
 ## Common Commands
 
-### Deploy the stack
-```bash
-aws cloudformation deploy \
-  --template-file Transcribe/transcribe-two-trigger-stack.yaml \
-  --stack-name transcribe-two-trigger-stack \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides ExistingBucketName=<your-bucket-name>
+### Deploy the full stack (first time or fresh account)
+```powershell
+.\deploy.ps1 -BucketName "transcribe-2027"
 ```
 
-### Delete the stack (clean up all resources)
-```bash
-aws cloudformation delete-stack --stack-name transcribe-two-trigger-stack
+### Run the Streamlit UI
+```powershell
+streamlit run app.py
+# Open http://localhost:8501
 ```
 
-### Test a Lambda function locally via AWS CLI
-Use the test event JSON from `Test_Sniffet`:
-```bash
-aws lambda invoke \
-  --function-name transcribe-two-trigger-stack-transcribe-trigger \
-  --payload '{"Records":[{"s3":{"bucket":{"name":"<bucket>"},"object":{"key":"input/file.mp3"}}}]}' \
-  response.json
+### Tear down the CloudFormation stack
+```powershell
+.\deploy.ps1 -BucketName "transcribe-2027" -Destroy
+# or directly:
+aws cloudformation delete-stack --stack-name transcribe-two-trigger-stack --region us-east-1
 ```
 
-### Check transcription job status
-```bash
-aws transcribe get-transcription-job --transcription-job-name <job-name>
+### Check stack tear-down status
+```powershell
+aws cloudformation describe-stacks --stack-name transcribe-two-trigger-stack --region us-east-1 --query "Stacks[0].{Status:StackStatus,Reason:StackStatusReason}" --output table
+# Wait until complete:
+aws cloudformation wait stack-delete-complete --stack-name transcribe-two-trigger-stack --region us-east-1
+```
+
+### Upload sample files and trigger the pipeline
+```powershell
+# Standard transcription
+aws s3 cp "Transcribe\On_Mono_Channel\transcribe_1.mp3" s3://transcribe-2027/input/transcribe_1.mp3
+
+# Call analytics
+aws s3 cp "Transcribe\On_2_Channels\InboundCall.mp3" s3://transcribe-2027/analytics/InboundCall.mp3
+```
+
+### Check job status
+```powershell
+aws transcribe list-transcription-jobs --region us-east-1 --query "TranscriptionJobSummaries[*].{Job:TranscriptionJobName,Status:TranscriptionJobStatus}" --output table
+aws transcribe list-call-analytics-jobs --region us-east-1 --query "CallAnalyticsJobSummaries[*].{Job:CallAnalyticsJobName,Status:CallAnalyticsJobStatus}" --output table
+```
+
+### Run Athena query from CLI
+```powershell
+$QueryId = aws athena start-query-execution `
+  --region us-east-1 `
+  --work-group "transcribe-workgroup" `
+  --query-string "SELECT jobName, status, results.language_code FROM transcribe_pipeline_db.std_transcripts LIMIT 5" `
+  --query "QueryExecutionId" --output text
+Start-Sleep -Seconds 10
+aws athena get-query-execution --query-execution-id $QueryId --region us-east-1 --query "QueryExecution.Status.State"
+```
+
+### Re-run Glue crawler to pick up new analytics output files
+```powershell
+aws glue start-crawler --name "analytics-transcripts-crawler" --region us-east-1
 ```

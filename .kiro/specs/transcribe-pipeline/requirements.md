@@ -45,17 +45,20 @@ All parameters are defined in `Transcribe/transcribe-two-trigger-stack.yaml`. Ea
 | `AnalyticsOutputPrefix` | `output/results/` | Output location passed to `StartCallAnalyticsJob`. Transcribe automatically appends `analytics/` subfolder — final output lands at `output/results/analytics/<job>.json`. |
 | `TranscribeDataAccessRoleName` | `AmazonTranscribeServiceRole-cloudagetranscriberole` | IAM role name for Amazon Transcribe Call Analytics data access. Constructed as `arn:aws:iam::<AccountId>:role/service-role/<name>`. |
 
-### Active Deployment Values (transcribeagent2026)
+### Active Deployment Values (transcribe-2027)
 
-```bash
-aws cloudformation deploy \
-  --template-file Transcribe/transcribe-two-trigger-stack.yaml \
-  --stack-name transcribe-two-trigger-stack \
-  --region us-east-1 \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides \
-    ExistingBucketName=transcribeagent2026 \
-    LambdaExecutionRoleName=cloudage \
+```powershell
+.\deploy.ps1 -BucketName "transcribe-2027"
+
+# or directly via CloudFormation:
+aws cloudformation deploy `
+  --template-file Transcribe/transcribe-two-trigger-stack.yaml `
+  --stack-name transcribe-two-trigger-stack `
+  --region us-east-1 `
+  --capabilities CAPABILITY_NAMED_IAM `
+  --parameter-overrides `
+    ExistingBucketName=transcribe-2027 `
+    LambdaExecutionRoleName=cloudage `
     TranscribeDataAccessRoleName=AmazonTranscribeServiceRole-cloudagetranscriberole
 ```
 
@@ -140,10 +143,11 @@ aws cloudformation deploy \
 |---|---|
 | `s3:GetObject`, `s3:PutObject` | `arn:aws:s3:::<bucket>/*` |
 | `s3:ListBucket`, `s3:GetBucketLocation`, `s3:GetBucketNotification`, `s3:PutBucketNotification` | `arn:aws:s3:::<bucket>` |
-| `transcribe:StartTranscriptionJob` | `arn:aws:transcribe:<region>:<account>:transcription-job/*` |
-| `transcribe:StartCallAnalyticsJob` | `arn:aws:transcribe:<region>:<account>:call-analytics-job/*` and `arn:aws:transcribe:<region>:<account>:analytics/*` |
-| `iam:PassRole` (conditioned on `iam:PassedToService: transcribe.amazonaws.com`) | `arn:aws:iam::<account>:role/service-role/<TranscribeDataAccessRoleName>` |
+| `transcribe:*` (via `AmazonTranscribeFullAccess` managed policy) | `*` — wildcard required for `StartCallAnalyticsJob` |
+| `iam:PassRole` (inline policy — no `iam:PassedToService` condition) | `arn:aws:iam::<account>:role/service-role/<TranscribeDataAccessRoleName>` |
 | `AWSLambdaBasicExecutionRole` (managed) | CloudWatch Logs |
+
+> **Note:** `StartCallAnalyticsJob` does not honour the `iam:PassedToService: transcribe.amazonaws.com` condition on `iam:PassRole`. The inline policy `PassRoleToTranscribeInline` omits this condition to avoid `AccessDeniedException`.
 
 ### Transcribe Data Access Role (`TranscribeDataAccessRoleName`)
 
@@ -159,9 +163,10 @@ aws cloudformation deploy \
 ## S3 Bucket Layout
 
 ```
-transcribeagent2026/
+transcribe-2027/
 ├── input/                        # Drop mono audio → triggers TranscribeFunction
 ├── analytics/                    # Drop stereo audio → triggers TranscribeAnalyticsFunction
+├── athena-results/               # Athena query result CSVs (auto-managed)
 └── output/
     └── results/
         ├── job_<filename>.json                          # Standard transcription output
@@ -186,13 +191,29 @@ transcribeagent2026/
 
 | Constant | Value | Purpose |
 |---|---|---|
-| `BUCKET_NAME` | `transcribeagent2026` | S3 bucket for all uploads and output reads |
+| `BUCKET_NAME` | `transcribe-2027` | S3 bucket for all uploads and output reads |
 | `STANDARD_PREFIX` | `input/` | Upload prefix for standard transcription |
 | `ANALYTICS_PREFIX` | `analytics/` | Upload prefix for call analytics |
 | `OUTPUT_PREFIX` | `output/results/` | S3 prefix to list/read standard output JSON |
 | `ANALYTICS_OUTPUT_PREFIX` | `output/results/analytics/` | S3 prefix to list/read analytics output JSON |
+| `ATHENA_RESULTS_PREFIX` | `athena-results/` | S3 prefix where Athena writes query result CSVs |
 | `REGION` | `us-east-1` | AWS region for all boto3 clients |
 | `SUPPORTED_FORMATS` | `mp3, mp4, wav, flac, ogg, amr, webm` | File types accepted by the upload widget |
+| `GLUE_DATABASE` | `transcribe_pipeline_db` | Glue database name for Athena queries |
+| `ATHENA_WORKGROUP` | `transcribe-workgroup` | Athena workgroup with result location configured |
+| `TABLE_STANDARD` | `std_transcripts` | Glue table for standard transcription output |
+| `TABLE_ANALYTICS` | `cal_analytics` | Glue table for call analytics output |
+
+## Glue / Athena Resources
+
+| Resource | Name | Details |
+|----------|------|---------|
+| Glue Database | `transcribe_pipeline_db` | Created by `deploy.ps1` Step 11 |
+| Glue Table (standard) | `std_transcripts` | Created via Athena DDL; points to `output/results/`; JsonSerDe |
+| Glue Table (analytics) | `cal_analytics` | Created by `analytics-transcripts-crawler`; points to `output/results/analytics/` |
+| Glue Crawler | `analytics-transcripts-crawler` | Role: `GlueTranscribeCrawlerRole`; prefix: `cal_` |
+| Glue Crawler Role | `GlueTranscribeCrawlerRole` | `AWSGlueServiceRole` + `AmazonS3FullAccess` |
+| Athena Workgroup | `transcribe-workgroup` | Results → `s3://transcribe-2027/athena-results/` |
 
 ---
 
